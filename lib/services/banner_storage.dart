@@ -27,10 +27,15 @@ class BannerStorage {
   static Future<List<String>> importar(Iterable<String> caminhosOrigem) async {
     final dir = await _diretorio();
     final destinos = <String>[];
+    var sequencial = 0;
     for (final origem in caminhosOrigem) {
       try {
-        final extensao = _extensao(origem);
-        final nome = '${DateTime.now().microsecondsSinceEpoch}$extensao';
+        // No Android o relógio do Dart tem resolução de milissegundo, então
+        // duas imagens copiadas no mesmo milissegundo gerariam o MESMO nome —
+        // a segunda sobrescreveria a primeira e a lista ficaria com dois
+        // caminhos idênticos. O sequencial garante nomes distintos.
+        final nome = '${DateTime.now().millisecondsSinceEpoch}_'
+            '${sequencial++}${_extensao(origem)}';
         final destino = '${dir.path}${Platform.pathSeparator}$nome';
         await File(origem).copy(destino);
         destinos.add(destino);

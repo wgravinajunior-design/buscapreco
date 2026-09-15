@@ -26,106 +26,128 @@ class ProductFullScreen extends StatelessWidget {
     final origem = product.origemMelhorPreco;
     final temDesconto = product.melhorPreco < product.precoVenda;
 
-    return Column(
-      children: [
-        Expanded(
-          child: Container(
-            width: double.infinity,
-            color: Colors.white,
-            padding: const EdgeInsets.all(24),
-            child: Center(
-              child: product.imagem != null
-                  ? Image.memory(product.imagem!, fit: BoxFit.contain)
-                  : Icon(Icons.inventory_2_outlined, size: 160, color: Colors.grey.shade300),
+    // Os tamanhos de fonte são fixos e generosos (é um totem, tem que ler de
+    // longe), então em tela baixa — celular em paisagem, que o app permite, ou
+    // tela pequena com faixas de quantidade — a faixa de preço estourava a
+    // altura disponível. Limitar a altura da faixa e encolher o conteúdo junto
+    // mantém o layout íntegro em qualquer tela, sem cortar informação.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const padding = EdgeInsets.fromLTRB(28, 22, 28, 30);
+        return Column(
+          children: [
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                color: Colors.white,
+                padding: const EdgeInsets.all(24),
+                child: Center(
+                  child: product.imagem != null
+                      ? Image.memory(product.imagem!, fit: BoxFit.contain)
+                      : Icon(Icons.inventory_2_outlined, size: 160, color: Colors.grey.shade300),
+                ),
+              ),
             ),
-          ),
-        ),
-        Container(
-          width: double.infinity,
-          color: corPrincipal,
-          padding: const EdgeInsets.fromLTRB(28, 22, 28, 30),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              if (temDesconto)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: corPromo,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      origem == PromoSource.encarte
-                          ? 'OFERTA DE ENCARTE · -${product.percentualDesconto.toStringAsFixed(0)}%'
-                          : 'PROMOÇÃO · -${product.percentualDesconto.toStringAsFixed(0)}%',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.6),
+              child: Container(
+                width: double.infinity,
+                color: corPrincipal,
+                padding: padding,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  // A largura fixa faz a descrição quebrar na largura real da
+                  // tela antes do FittedBox entrar em ação; sem isso o texto
+                  // viraria uma linha só, reduzida a um tamanho ilegível.
+                  child: SizedBox(
+                    width: constraints.maxWidth - padding.horizontal,
+                    child: _painelPreco(origem: origem, temDesconto: temDesconto),
                   ),
                 ),
-              Text(
-                product.descricao,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _painelPreco({required PromoSource origem, required bool temDesconto}) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        if (temDesconto)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              decoration: BoxDecoration(color: corPromo, borderRadius: BorderRadius.circular(20)),
+              child: Text(
+                origem == PromoSource.encarte
+                    ? 'OFERTA DE ENCARTE · -${product.percentualDesconto.toStringAsFixed(0)}%'
+                    : 'PROMOÇÃO · -${product.percentualDesconto.toStringAsFixed(0)}%',
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 28,
+                  fontSize: 15,
                   fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Cód. ${product.codigo}',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14),
-              ),
-              const SizedBox(height: 16),
-              if (temDesconto)
-                Text(
-                  _moeda.format(product.precoVenda),
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
-                    fontSize: 24,
-                    decoration: TextDecoration.lineThrough,
-                    decorationColor: Colors.white.withValues(alpha: 0.6),
-                  ),
-                ),
-              _PriceTag(
-                value: product.melhorPreco,
-                unidade: product.unidade,
-                destaque: temDesconto,
-                corPromo: corPromo,
-              ),
-              if (product.temFaixaQuantidade) ...[
-                const SizedBox(height: 16),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 16,
-                  runSpacing: 6,
-                  children: product.faixasQuantidade
-                      .map((t) => Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              '${t.label}: ${t.isPercentual ? '-${t.valor.toStringAsFixed(0)}%' : _moeda.format(t.valor)}',
-                              style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
-                            ),
-                          ))
-                      .toList(),
-                ),
-              ],
-            ],
+            ),
           ),
+        Text(
+          product.descricao,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
         ),
+        const SizedBox(height: 4),
+        Text(
+          'Cód. ${product.codigo}',
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 14),
+        ),
+        const SizedBox(height: 16),
+        if (temDesconto)
+          Text(
+            _moeda.format(product.precoVenda),
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.6),
+              fontSize: 24,
+              decoration: TextDecoration.lineThrough,
+              decorationColor: Colors.white.withValues(alpha: 0.6),
+            ),
+          ),
+        _PriceTag(
+          value: product.melhorPreco,
+          unidade: product.unidade,
+          destaque: temDesconto,
+          corPromo: corPromo,
+        ),
+        if (product.temFaixaQuantidade) ...[
+          const SizedBox(height: 16),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 16,
+            runSpacing: 6,
+            children: product.faixasQuantidade
+                .map(
+                  (t) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      '${t.label}: ${t.isPercentual ? '-${t.valor.toStringAsFixed(0)}%' : _moeda.format(t.valor)}',
+                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ],
       ],
     );
   }
@@ -168,12 +190,7 @@ class _PriceTag extends StatelessWidget {
         ),
         Text(
           '$reais',
-          style: TextStyle(
-            color: cor,
-            fontSize: destaque ? 92 : 64,
-            fontWeight: FontWeight.w900,
-            height: 1,
-          ),
+          style: TextStyle(color: cor, fontSize: destaque ? 92 : 64, fontWeight: FontWeight.w900, height: 1),
         ),
         Padding(
           padding: const EdgeInsets.only(top: 14),
@@ -192,7 +209,12 @@ class _PriceTag extends StatelessWidget {
       ],
     );
 
-    if (!destaque) return conteudo;
+    // O preço tem largura fixa grande (92px nos reais) e descrições longas de
+    // unidade ou valores com muitos dígitos podem não caber numa tela estreita.
+    // Encolher é sempre melhor do que estourar a linha.
+    final ajustado = FittedBox(fit: BoxFit.scaleDown, child: conteudo);
+
+    if (!destaque) return ajustado;
 
     return Container(
       margin: const EdgeInsets.only(top: 4),
@@ -204,7 +226,7 @@ class _PriceTag extends StatelessWidget {
           BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 12, offset: const Offset(0, 4)),
         ],
       ),
-      child: conteudo,
+      child: ajustado,
     );
   }
 }

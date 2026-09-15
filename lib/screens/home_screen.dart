@@ -40,7 +40,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // Um totem precisa ficar com a tela sempre acesa — sem isso o Android
     // apaga o display e o cliente encontra o aparelho "desligado".
-    WakelockPlus.enable();
+    // Falha aqui (plugin ausente, plataforma sem suporte) não pode virar
+    // exceção não tratada e derrubar a inicialização da tela.
+    unawaited(WakelockPlus.enable().catchError((_) {}));
     // Se qualquer coisa roubar o foco do campo invisível (um diálogo, um
     // SnackBar, o diálogo de impressão), o leitor de código de barras físico
     // para de funcionar até reiniciar o app. Devolver o foco assim que ele se
@@ -69,7 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _scanFocusNode.dispose();
     _scanController.dispose();
     _service.disconnect();
-    WakelockPlus.disable();
+    unawaited(WakelockPlus.disable().catchError((_) {}));
     super.dispose();
   }
 
@@ -138,6 +140,9 @@ class _HomeScreenState extends State<HomeScreen> {
     // connection"), caso o leitor de código de barras dispare mais de um
     // evento para a mesma leitura.
     if (_looking) return;
+    // O timer da leitura anterior ainda pode estar correndo; se ele disparar
+    // no meio desta consulta, limpa a tela por um instante à toa.
+    _revertTimer?.cancel();
     if (!_service.isConnected) {
       setState(() => _lookupError = 'Sem conexão com o banco de dados. Verifique a configuração.');
       _scheduleRevert(seconds: 4);

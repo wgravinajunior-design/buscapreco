@@ -103,6 +103,15 @@ class AppConfig {
         gondolaFields: GondolaFieldConfig.padrao(),
       );
 
+  /// Valor gravado por uma versão anterior do app (ou por um formulário que
+  /// ainda não validava) não pode voltar como zero/negativo: isso vira
+  /// `Timer.periodic(Duration.zero)` no carrossel, bitmap de largura zero na
+  /// impressora e página PDF de dimensão inválida na etiqueta.
+  static T _minimo<T extends num>(T? valor, T minimo, T padrao) {
+    if (valor == null) return padrao;
+    return valor < minimo ? padrao : valor;
+  }
+
   static Future<AppConfig> load() async {
     final prefs = await SharedPreferences.getInstance();
     final defaults = AppConfig.defaults();
@@ -113,18 +122,22 @@ class AppConfig {
       user: prefs.getString(_kUser) ?? defaults.user,
       password: prefs.getString(_kPassword) ?? defaults.password,
       bannerImagePaths: prefs.getStringList(_kBanners) ?? defaults.bannerImagePaths,
-      bannerSeconds: prefs.getInt(_kBannerSeconds) ?? defaults.bannerSeconds,
+      bannerSeconds: _minimo(prefs.getInt(_kBannerSeconds), 1, defaults.bannerSeconds),
       primaryColorValue: prefs.getInt(_kPrimaryColor) ?? defaults.primaryColorValue,
       promoColorValue: prefs.getInt(_kPromoColor) ?? defaults.promoColorValue,
       gondolaLabelEnabled: prefs.getBool(_kGondolaEnabled) ?? defaults.gondolaLabelEnabled,
-      gondolaWidthMm: prefs.getDouble(_kGondolaWidthMm) ?? defaults.gondolaWidthMm,
-      gondolaHeightMm: prefs.getDouble(_kGondolaHeightMm) ?? defaults.gondolaHeightMm,
+      gondolaWidthMm: _minimo(prefs.getDouble(_kGondolaWidthMm), 1.0, defaults.gondolaWidthMm),
+      gondolaHeightMm: _minimo(prefs.getDouble(_kGondolaHeightMm), 1.0, defaults.gondolaHeightMm),
       gondolaFields: GondolaFieldConfig.desserializar(prefs.getString(_kGondolaFields)),
       gondolaPrinterAddress: prefs.getString(_kGondolaPrinterAddress),
       gondolaPrinterName: prefs.getString(_kGondolaPrinterName),
       gondolaProtocol: prefs.getString(_kGondolaProtocol) ?? defaults.gondolaProtocol,
       gondolaAutoPrint: prefs.getBool(_kGondolaAutoPrint) ?? defaults.gondolaAutoPrint,
-      gondolaPrinterWidthDots: prefs.getInt(_kGondolaPrinterWidthDots) ?? defaults.gondolaPrinterWidthDots,
+      gondolaPrinterWidthDots: _minimo(
+        prefs.getInt(_kGondolaPrinterWidthDots),
+        8,
+        defaults.gondolaPrinterWidthDots,
+      ),
     );
   }
 

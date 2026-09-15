@@ -86,6 +86,13 @@ class _IdleCarouselState extends State<IdleCarousel> {
                     File(widget.imagePaths[i]),
                     fit: BoxFit.cover,
                     width: double.infinity,
+                    // Banner escolhido da galeria costuma ser uma foto de
+                    // vários megapixels. Sem limitar a decodificação, cada
+                    // imagem ocupa dezenas de MB na memória — num tablet
+                    // barato ligado o dia inteiro isso acaba em OOM.
+                    cacheWidth: (MediaQuery.sizeOf(context).width *
+                            MediaQuery.devicePixelRatioOf(context))
+                        .round(),
                     errorBuilder: (_, _, _) => _buildPlaceholder(),
                   ),
                 ),

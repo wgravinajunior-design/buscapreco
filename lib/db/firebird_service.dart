@@ -79,20 +79,30 @@ class FirebirdService {
             THEN p.PRD_VALOR_PROM
             ELSE NULL
           END AS PRD_VALOR_PROM_ATIVO,
-          pr.PRO_TITULO,
-          pce.PRCE_TIPO_VALOR,
-          pce.PRCE_VALOR,
+          enc.PRO_TITULO,
+          enc.PRCE_TIPO_VALOR,
+          enc.PRCE_VALOR,
           (SELECT FIRST 1 b2.PRDC_COD_BARRAS
              FROM TB_PROD_CODIGO_BARRAS b2
             WHERE CAST(b2.PRDC_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
             ORDER BY b2.PRDC_COD_BARRAS) AS COD_BARRAS
         FROM TB_PRODUTO p
-        LEFT JOIN TB_PROMOCAO_ENCARTE pce
-               ON CAST(pce.PRCE_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
-        LEFT JOIN TB_PROMOCAO pr
-               ON pr.PRO_ID = pce.PRCE_PROMOCAO
-              AND pr.PRO_DT_INICIO <= CURRENT_DATE
-              AND pr.PRO_DT_FIM >= CURRENT_DATE
+        -- O filtro de vigência precisa ficar DENTRO da tabela derivada. Num
+        -- LEFT JOIN direto em TB_PROMOCAO_ENCARTE, uma promoção vencida ainda
+        -- traria PRCE_VALOR preenchido (só TB_PROMOCAO viria NULL) e o preço
+        -- de um encarte expirado acabaria aplicado no produto.
+        LEFT JOIN (
+          SELECT
+            pce.PRCE_PRODUTO,
+            pce.PRCE_TIPO_VALOR,
+            pce.PRCE_VALOR,
+            pr.PRO_TITULO,
+            pr.PRO_DT_INICIO
+          FROM TB_PROMOCAO_ENCARTE pce
+          JOIN TB_PROMOCAO pr ON pr.PRO_ID = pce.PRCE_PROMOCAO
+          WHERE pr.PRO_DT_INICIO <= CURRENT_DATE
+            AND pr.PRO_DT_FIM >= CURRENT_DATE
+        ) enc ON CAST(enc.PRCE_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
         WHERE p.PRD_STATUS <> 'I'
           AND (
             p.PRD_CODIGO = ?
@@ -103,7 +113,10 @@ class FirebirdService {
                 AND b.PRDC_COD_BARRAS = ?
             )
           )
-        ORDER BY pr.PRO_DT_INICIO DESC NULLS LAST
+        -- Encarte mais recente primeiro; PRD_CODIGO só para desempatar e
+        -- manter o resultado estável quando mais de um produto casa com o
+        -- código lido.
+        ORDER BY enc.PRO_DT_INICIO DESC NULLS LAST, p.PRD_CODIGO
       ''',
       parameters: [trimmed, trimmed, trimmed],
     ).timeout(_networkTimeout);

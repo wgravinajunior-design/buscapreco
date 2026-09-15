@@ -237,7 +237,9 @@ class GondolaLabelService {
   }
 
   /// Converte a etiqueta rasterizada (RGBA) em bitmap 1 bit por pixel
-  /// (preto/branco), formato de entrada para os dois protocolos suportados.
+  /// (preto/branco), formato de entrada do comando BITMAP do TSPL. O caminho
+  /// ESC/POS não passa por aqui: ele usa comandos nativos de texto e código
+  /// de barras, sem imagem.
   /// [larguraMaximaPx] garante que a imagem nunca saia mais larga do que a
   /// impressora suporta, mesmo com pequenos arredondamentos do rasterizador.
   static _Bitmap _bitmapDoRaster(PdfRaster raster, {required int larguraMaximaPx}) {
