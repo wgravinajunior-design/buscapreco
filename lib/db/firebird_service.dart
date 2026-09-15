@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:fbdb/fbdb.dart';
 import '../config/app_config.dart';
+import '../models/lookup_mode.dart';
 import '../models/product_price.dart';
 
 class FirebirdException implements Exception {
@@ -53,17 +54,32 @@ class FirebirdService {
     return db;
   }
 
-  /// Busca um único produto por código de barras, código do produto ou
-  /// referência (correspondência exata).
+  /// Busca um único produto pelo campo indicado em [modo] (correspondência
+  /// exata): código de barras, código interno ou referência.
   ///
   /// Tudo que a tela do totem precisa vem numa **única** ida ao servidor:
   /// dados do produto, promoção por data, promoção de encarte ativa e código
   /// de barras principal. Antes eram quatro consultas em sequência por
   /// leitura, o que deixava o totem visivelmente lento em rede de loja.
-  Future<ProductPrice?> lookupByCode(String code) async {
+  Future<ProductPrice?> lookupByCode(String code, {required LookupMode modo}) async {
     final db = _requireDb();
     final trimmed = code.trim();
     if (trimmed.isEmpty) return null;
+
+    // Procura em UM campo só, o escolhido na configuração. Buscar nos três ao
+    // mesmo tempo fazia o totem exibir produto trocado: o código de barras de
+    // um item pode ser o código interno ou a referência de outro, e o banco
+    // devolvia qualquer um dos casamentos.
+    final (juncaoCodigoBarras, filtro) = switch (modo) {
+      LookupMode.codigoBarras => (
+        '''LEFT JOIN TB_PROD_CODIGO_BARRAS blido
+                  ON CAST(blido.PRDC_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
+                 AND blido.PRDC_COD_BARRAS = ?''',
+        'blido.PRDC_PRODUTO IS NOT NULL',
+      ),
+      LookupMode.codigo => ('', 'p.PRD_CODIGO = ?'),
+      LookupMode.referencia => ('', 'UPPER(p.PRD_REFERENCIA) = UPPER(?)'),
+    };
 
     final row = await db.selectOne(
       sql: '''
@@ -103,22 +119,14 @@ class FirebirdService {
           WHERE pr.PRO_DT_INICIO <= CURRENT_DATE
             AND pr.PRO_DT_FIM >= CURRENT_DATE
         ) enc ON CAST(enc.PRCE_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
+        $juncaoCodigoBarras
         WHERE p.PRD_STATUS <> 'I'
-          AND (
-            p.PRD_CODIGO = ?
-            OR UPPER(p.PRD_REFERENCIA) = UPPER(?)
-            OR EXISTS (
-              SELECT 1 FROM TB_PROD_CODIGO_BARRAS b
-              WHERE CAST(b.PRDC_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
-                AND b.PRDC_COD_BARRAS = ?
-            )
-          )
+          AND $filtro
         -- Encarte mais recente primeiro; PRD_CODIGO só para desempatar e
-        -- manter o resultado estável quando mais de um produto casa com o
-        -- código lido.
+        -- manter o resultado estável.
         ORDER BY enc.PRO_DT_INICIO DESC NULLS LAST, p.PRD_CODIGO
       ''',
-      parameters: [trimmed, trimmed, trimmed],
+      parameters: [trimmed],
     ).timeout(_networkTimeout);
     if (row == null) return null;
     return _buildProductPrice(row);

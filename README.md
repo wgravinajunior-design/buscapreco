@@ -56,13 +56,26 @@ versionados.
 | `lib/services/bluetooth_printer_service.dart` | Envio para a impressora Bluetooth (SPP) |
 | `lib/services/banner_storage.dart` | Guarda os banners no armazenamento do app |
 
-## Leitura de código de barras
+## Leitura do produto
 
-Duas formas, simultâneas:
+Em **Configurações → Leitura do produto** se escolhe por qual campo do cadastro
+o texto lido é procurado: **código de barras** (padrão), **código** interno ou
+**referência**. A busca é exclusiva, num campo só — procurar nos três ao mesmo
+tempo fazia o totem exibir produto trocado, porque o código de barras de um item
+pode ser o código interno ou a referência de outro.
+
+A leitura em si chega por duas formas, simultâneas:
 
 - **Leitor físico USB/Bluetooth** que se comporta como teclado — é o modo
-  principal do totem. A tela mantém o foco num campo invisível e reage ao Enter
-  enviado pelo leitor.
+  principal do totem. A tela segura o foco do teclado num `Focus` invisível e
+  monta o código em [`BarcodeKeyboard`](lib/services/barcode_keyboard.dart) até
+  o Enter.
+
+  Não troque isso por um `TextField`: um campo de linha única chama
+  `focusNode.unfocus()` logo depois do `onSubmitted`. Como o leitor digita cerca
+  de um caractere por milissegundo, os primeiros caracteres da leitura seguinte
+  se perdem — o código chega truncado e o totem ou não acha nada, ou mostra um
+  produto que não corresponde ao que foi lido.
 - **Câmera**, pelo ícone de scanner (`mobile_scanner`), para uso manual.
 
 ## Impressora de etiqueta

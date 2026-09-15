@@ -4,6 +4,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../config/app_config.dart';
 import '../db/firebird_service.dart';
 import '../models/product_price.dart';
+import '../services/barcode_keyboard.dart';
 import '../services/gondola_label_service.dart';
 import '../widgets/idle_carousel.dart';
 import '../widgets/product_full_screen.dart';
@@ -23,8 +24,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _service = FirebirdService();
-  final _scanFocusNode = FocusNode();
-  final _scanController = TextEditingController();
+  final _scanFocusNode = FocusNode(debugLabel: 'leitor de código de barras');
+  late final BarcodeKeyboard _leitor;
 
   AppConfig? _config;
   bool _connecting = false;
@@ -43,7 +44,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // Falha aqui (plugin ausente, plataforma sem suporte) não pode virar
     // exceção não tratada e derrubar a inicialização da tela.
     unawaited(WakelockPlus.enable().catchError((_) {}));
-    // Se qualquer coisa roubar o foco do campo invisível (um diálogo, um
+    _leitor = BarcodeKeyboard(aoLerCodigo: _lookup);
+    // Se qualquer coisa roubar o foco do receptor de teclas (um diálogo, um
     // SnackBar, o diálogo de impressão), o leitor de código de barras físico
     // para de funcionar até reiniciar o app. Devolver o foco assim que ele se
     // perde mantém o totem sempre pronto para a próxima leitura.
@@ -67,9 +69,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _revertTimer?.cancel();
+    _leitor.dispose();
     _scanFocusNode.removeListener(_manterFocoNoLeitor);
     _scanFocusNode.dispose();
-    _scanController.dispose();
     _service.disconnect();
     unawaited(WakelockPlus.disable().catchError((_) {}));
     super.dispose();
@@ -140,6 +142,8 @@ class _HomeScreenState extends State<HomeScreen> {
     // connection"), caso o leitor de código de barras dispare mais de um
     // evento para a mesma leitura.
     if (_looking) return;
+    final config = _config;
+    if (config == null) return;
     // O timer da leitura anterior ainda pode estar correndo; se ele disparar
     // no meio desta consulta, limpa a tela por um instante à toa.
     _revertTimer?.cancel();
@@ -153,7 +157,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _lookupError = null;
     });
     try {
-      final result = await _service.lookupByCode(code);
+      final result = await _service.lookupByCode(code, modo: config.lookupMode);
       _aplicarResultado(result);
     } catch (e) {
       // A conexão pode ter caído (rede instável, timeout do servidor, etc.).
@@ -161,7 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
       // de desistir, para não depender de fechar e abrir o app.
       try {
         await _connect();
-        final result = await _service.lookupByCode(code);
+        final result = await _service.lookupByCode(code, modo: config.lookupMode);
         _aplicarResultado(result);
       } catch (e2) {
         if (!mounted) return;
@@ -208,25 +212,14 @@ class _HomeScreenState extends State<HomeScreen> {
             Positioned.fill(
               child: _buildContent(config),
             ),
-            // Campo invisível que recebe a leitura de um leitor de código de
-            // barras físico (que se comporta como um teclado + Enter).
-            Positioned(
-              width: 1,
-              height: 1,
-              left: -100,
-              child: Opacity(
-                opacity: 0,
-                child: TextField(
-                  focusNode: _scanFocusNode,
-                  controller: _scanController,
-                  autofocus: true,
-                  keyboardType: TextInputType.none,
-                  onSubmitted: (v) {
-                    _scanController.clear();
-                    if (v.trim().isNotEmpty) _lookup(v.trim());
-                  },
-                ),
-              ),
+            // Recebe a leitura do leitor de código de barras físico, que se
+            // comporta como um teclado + Enter. Não ocupa espaço nem desenha
+            // nada; existe só para segurar o foco do teclado.
+            Focus(
+              focusNode: _scanFocusNode,
+              autofocus: true,
+              onKeyEvent: (_, evento) => _leitor.aoReceberTecla(evento),
+              child: const SizedBox.shrink(),
             ),
             Positioned(
               top: 8,

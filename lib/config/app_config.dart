@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/gondola_field.dart';
+import '../models/lookup_mode.dart';
 
 /// Configuração de conexão com o Firebird, do totem e das cores do sistema,
 /// persistida localmente.
@@ -24,6 +25,7 @@ class AppConfig {
   static const _kGondolaProtocol = 'gondola_protocol';
   static const _kGondolaAutoPrint = 'gondola_auto_print';
   static const _kGondolaPrinterWidthDots = 'gondola_printer_width_dots';
+  static const _kLookupMode = 'lookup_mode';
 
   static const int defaultPrimaryColor = 0xFF13315C; // azul padrão
   static const int defaultPromoColor = 0xFFE30613; // vermelho padrão
@@ -62,6 +64,8 @@ class AppConfig {
   String gondolaProtocol;
   bool gondolaAutoPrint;
   int gondolaPrinterWidthDots;
+  /// Por qual campo do cadastro o código lido é procurado.
+  LookupMode lookupMode;
 
   AppConfig({
     required this.host,
@@ -82,6 +86,7 @@ class AppConfig {
     this.gondolaProtocol = protocoloEscPos,
     this.gondolaAutoPrint = false,
     this.gondolaPrinterWidthDots = defaultGondolaPrinterWidthDots,
+    this.lookupMode = LookupMode.padrao,
   });
 
   Color get primaryColor => Color(primaryColorValue);
@@ -138,6 +143,7 @@ class AppConfig {
         8,
         defaults.gondolaPrinterWidthDots,
       ),
+      lookupMode: LookupMode.porNome(prefs.getString(_kLookupMode)),
     );
   }
 
@@ -169,6 +175,7 @@ class AppConfig {
     await prefs.setString(_kGondolaProtocol, gondolaProtocol);
     await prefs.setBool(_kGondolaAutoPrint, gondolaAutoPrint);
     await prefs.setInt(_kGondolaPrinterWidthDots, gondolaPrinterWidthDots);
+    await prefs.setString(_kLookupMode, lookupMode.name);
   }
 
   /// Caminho no formato aceito pelo fbclient para conexão remota via TCP/IP.

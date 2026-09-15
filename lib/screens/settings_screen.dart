@@ -4,6 +4,7 @@ import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:image_picker/image_picker.dart';
 import '../config/app_config.dart';
 import '../models/gondola_field.dart';
+import '../models/lookup_mode.dart';
 import '../services/banner_storage.dart';
 import '../services/bluetooth_printer_service.dart';
 import '../widgets/color_palette_picker.dart';
@@ -32,6 +33,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final TextEditingController _gondolaWidth;
   late final TextEditingController _gondolaHeight;
   late List<GondolaFieldConfig> _gondolaFields;
+  late LookupMode _lookupMode;
   String? _gondolaPrinterAddress;
   String? _gondolaPrinterName;
   bool _buscandoImpressoras = false;
@@ -55,6 +57,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _gondolaWidth = TextEditingController(text: widget.config.gondolaWidthMm.toStringAsFixed(0));
     _gondolaHeight = TextEditingController(text: widget.config.gondolaHeightMm.toStringAsFixed(0));
     _gondolaFields = GondolaFieldConfig.copiarLista(widget.config.gondolaFields);
+    _lookupMode = widget.config.lookupMode;
     _gondolaPrinterAddress = widget.config.gondolaPrinterAddress;
     _gondolaPrinterName = widget.config.gondolaPrinterName;
     _gondolaProtocol = widget.config.gondolaProtocol;
@@ -177,6 +180,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ..gondolaWidthMm = double.tryParse(_gondolaWidth.text.trim()) ?? widget.config.gondolaWidthMm
       ..gondolaHeightMm = double.tryParse(_gondolaHeight.text.trim()) ?? widget.config.gondolaHeightMm
       ..gondolaFields = _gondolaFields
+      ..lookupMode = _lookupMode
       ..gondolaPrinterAddress = _gondolaPrinterAddress
       ..gondolaPrinterName = _gondolaPrinterName
       ..gondolaProtocol = _gondolaProtocol
@@ -261,6 +265,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 border: OutlineInputBorder(),
               ),
               validator: (v) => (v == null || v.isEmpty) ? 'Informe a senha' : null,
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Leitura do produto',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Qual campo do cadastro o totem procura com o que foi lido. O '
+              'mesmo número pode existir em mais de um campo — o código de '
+              'barras de um produto pode ser o código interno de outro — então '
+              'procurar em todos ao mesmo tempo faz aparecer produto trocado.',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<LookupMode>(
+              showSelectedIcon: false,
+              segments: LookupMode.values
+                  .map((m) => ButtonSegment(value: m, label: Text(m.rotulo)))
+                  .toList(),
+              selected: {_lookupMode},
+              onSelectionChanged: (v) => setState(() => _lookupMode = v.first),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _lookupMode.descricao,
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
             ),
             const SizedBox(height: 24),
             const Text(
