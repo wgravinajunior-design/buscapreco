@@ -14,17 +14,24 @@ class BluetoothPrinterException implements Exception {
 /// (perfil SPP/RFCOMM). A impressora precisa ser pareada uma vez nas
 /// configurações de Bluetooth do Android antes de aparecer na lista.
 class BluetoothPrinterService {
+  /// O app só conversa com impressoras **já pareadas** pelo Android — nunca
+  /// faz varredura. Por isso BLUETOOTH_CONNECT basta: pedir BLUETOOTH_SCAN ou
+  /// localização só geraria prompts a mais sem necessidade (e localização é
+  /// uma permissão sensível que o usuário costuma negar).
+  /// Em Android anterior ao 12 o permission_handler já responde "concedida"
+  /// sozinho, porque lá a permissão é concedida na instalação.
   static Future<bool> ensurePermissions() async {
-    final statuses = await [
-      Permission.bluetoothConnect,
-      Permission.bluetoothScan,
-      Permission.location,
-    ].request();
-    return statuses[Permission.bluetoothConnect]?.isGranted ?? false;
+    final status = await Permission.bluetoothConnect.request();
+    return status.isGranted;
   }
 
   static Future<List<BluetoothDevice>> listarPareados() async {
-    await ensurePermissions();
+    if (!await ensurePermissions()) {
+      throw BluetoothPrinterException(
+        'Permissão de Bluetooth negada. Autorize o acesso ao Bluetooth nas '
+        'configurações do Android para escolher a impressora.',
+      );
+    }
     try {
       return await FlutterBluetoothSerial.instance.getBondedDevices();
     } catch (e) {
@@ -36,7 +43,12 @@ class BluetoothPrinterService {
   /// térmicas costumam encerrar a sessão entre impressões, então não vale a
   /// pena manter a conexão aberta entre uma etiqueta e outra.
   static Future<void> enviar(String address, Uint8List bytes) async {
-    await ensurePermissions();
+    if (!await ensurePermissions()) {
+      throw BluetoothPrinterException(
+        'Permissão de Bluetooth negada. Autorize o acesso ao Bluetooth nas '
+        'configurações do Android para imprimir a etiqueta.',
+      );
+    }
     BluetoothConnection? connection;
     try {
       connection = await BluetoothConnection.toAddress(address);

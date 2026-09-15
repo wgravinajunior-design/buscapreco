@@ -32,18 +32,13 @@ class ProductPrice {
   final String unidade;
   final Uint8List? imagem;
   final String? codigoBarras;
-  final double? precoPorKg;
 
-  // Promoção por data (na própria TB_PRODUTO)
+  /// Preço promocional por data, vindo da própria TB_PRODUTO.
   final double? precoPromoData;
-  final DateTime? promoDataInicio;
-  final DateTime? promoDataFim;
 
   // Promoção de encarte ativa
   final String? encarteTitulo;
   final double? precoEncarte;
-  final DateTime? encarteInicio;
-  final DateTime? encarteFim;
 
   // Faixas de quantidade (gerais e/ou do encarte)
   final List<QuantityTier> faixasQuantidade;
@@ -56,17 +51,15 @@ class ProductPrice {
     required this.unidade,
     this.imagem,
     this.codigoBarras,
-    this.precoPorKg,
     this.precoPromoData,
-    this.promoDataInicio,
-    this.promoDataFim,
     this.encarteTitulo,
     this.precoEncarte,
-    this.encarteInicio,
-    this.encarteFim,
     this.faixasQuantidade = const [],
   });
 
+  // Uma "promoção" que não baixa o preço não é promoção: sem essa checagem um
+  // cadastro errado faria o totem anunciar um valor ACIMA do preço de
+  // prateleira.
   bool get temPromoData => precoPromoData != null && precoPromoData! > 0 && precoPromoData! < precoVenda;
   bool get temEncarte => precoEncarte != null && precoEncarte! > 0 && precoEncarte! < precoVenda;
   bool get temFaixaQuantidade => faixasQuantidade.isNotEmpty;
@@ -101,9 +94,6 @@ class ProductPrice {
         precoVenda: 39.90,
         unidade: 'UN',
         codigoBarras: '7610400014649',
-        precoPorKg: 399.00,
         precoPromoData: 29.90,
-        promoDataInicio: DateTime.now().subtract(const Duration(days: 1)),
-        promoDataFim: DateTime.now().add(const Duration(days: 7)),
       );
 }

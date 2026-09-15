@@ -1,0 +1,11 @@
+# Copie para android/key.properties e preencha com os dados da sua keystore.
+# NUNCA versione o key.properties nem o arquivo .jks (ambos estão no .gitignore).
+#
+# Para gerar a keystore (uma vez, guarde em local seguro e com backup):
+#   keytool -genkey -v -keystore buscapreco.jks -keyalg RSA -keysize 2048 \
+#     -validity 10000 -alias buscapreco
+
+storeFile=C:/caminho/seguro/buscapreco.jks
+storePassword=
+keyAlias=buscapreco
+keyPassword=

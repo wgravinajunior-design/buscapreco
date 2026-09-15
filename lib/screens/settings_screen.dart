@@ -4,6 +4,7 @@ import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:image_picker/image_picker.dart';
 import '../config/app_config.dart';
 import '../models/gondola_field.dart';
+import '../services/banner_storage.dart';
 import '../services/bluetooth_printer_service.dart';
 import '../widgets/color_palette_picker.dart';
 import 'gondola_label_editor_screen.dart';
@@ -143,7 +144,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final picker = ImagePicker();
     final picked = await picker.pickMultiImage();
     if (picked.isEmpty) return;
-    setState(() => _banners.addAll(picked.map((x) => x.path)));
+    // Copia para o armazenamento definitivo do app: o caminho devolvido pelo
+    // image_picker aponta para o cache, que o Android apaga sozinho.
+    final salvos = await BannerStorage.importar(picked.map((x) => x.path));
+    if (!mounted) return;
+    if (salvos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Não foi possível salvar as imagens escolhidas.')),
+      );
+      return;
+    }
+    setState(() => _banners.addAll(salvos));
   }
 
   void _removeBanner(int index) {
@@ -173,6 +184,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ..gondolaPrinterWidthDots = int.tryParse(_gondolaPrinterWidthDots.text.trim()) ??
           widget.config.gondolaPrinterWidthDots;
     await widget.config.save();
+    // Só agora — depois de confirmado o save — apaga do disco os banners que
+    // o usuário removeu, para não acumular imagens órfãs no aparelho.
+    await BannerStorage.limparOrfaos(_banners);
     if (mounted) Navigator.of(context).pop(true);
   }
 

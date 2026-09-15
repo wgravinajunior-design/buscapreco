@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../config/app_config.dart';
 import '../db/firebird_service.dart';
 import '../models/product_price.dart';
@@ -37,15 +38,38 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    // Um totem precisa ficar com a tela sempre acesa — sem isso o Android
+    // apaga o display e o cliente encontra o aparelho "desligado".
+    WakelockPlus.enable();
+    // Se qualquer coisa roubar o foco do campo invisível (um diálogo, um
+    // SnackBar, o diálogo de impressão), o leitor de código de barras físico
+    // para de funcionar até reiniciar o app. Devolver o foco assim que ele se
+    // perde mantém o totem sempre pronto para a próxima leitura.
+    _scanFocusNode.addListener(_manterFocoNoLeitor);
     _init();
+  }
+
+  void _manterFocoNoLeitor() {
+    if (!mounted || _scanFocusNode.hasFocus) return;
+    // Espera o frame atual terminar: durante uma transição de rota ou a
+    // abertura de um diálogo, pedir o foco de volta na hora não funciona.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _scanFocusNode.hasFocus) return;
+      // Só recupera o foco se esta tela ainda for a visível — caso contrário
+      // roubaríamos o foco dos campos da tela de configuração.
+      if (ModalRoute.of(context)?.isCurrent != true) return;
+      _scanFocusNode.requestFocus();
+    });
   }
 
   @override
   void dispose() {
     _revertTimer?.cancel();
+    _scanFocusNode.removeListener(_manterFocoNoLeitor);
     _scanFocusNode.dispose();
     _scanController.dispose();
     _service.disconnect();
+    WakelockPlus.disable();
     super.dispose();
   }
 

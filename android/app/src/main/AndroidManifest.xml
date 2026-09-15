@@ -3,12 +3,13 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
 
-    <!-- Impressora de etiqueta de gôndola via Bluetooth clássico (SPP). -->
+    <!-- Impressora de etiqueta de gôndola via Bluetooth clássico (SPP).
+         O app só usa dispositivos JÁ PAREADOS pelo Android, nunca faz
+         varredura — por isso não precisa de BLUETOOTH_SCAN nem de
+         localização. -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"/>
     <uses-feature android:name="android.hardware.bluetooth" android:required="false"/>
     <application
         android:label="BuscaPrecoUp"

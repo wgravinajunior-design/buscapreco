@@ -175,11 +175,14 @@ class GondolaLabelService {
       case GondolaFieldType.data:
         return _data.format(DateTime.now());
       case GondolaFieldType.precoPorUnidade:
-        if (product.precoPorKg == null) return null;
+        // Preço por unidade de medida do produto. Usa o preço EFETIVO: antes
+        // este bloco imprimia sempre o preço cheio, contradizendo o preço
+        // grande da etiqueta sempre que havia promoção ativa.
         // Unidade vem direto do cadastro do produto (PRD_UN_VENDA), não é
         // configurável — evita etiqueta com unidade errada por esquecimento.
         final unidade = product.unidade.trim();
-        return 'Preço${unidade.isEmpty ? '' : '/$unidade'} ${_moeda.format(product.precoPorKg)}';
+        if (unidade.isEmpty) return null;
+        return 'Preço/$unidade ${_moeda.format(product.melhorPreco)}';
       case GondolaFieldType.precoOriginal:
         if (!temDesconto) return null;
         return _moeda.format(product.precoVenda);
@@ -261,6 +264,12 @@ class GondolaLabelService {
 
   /// Comandos TSPL — protocolo de impressoras de etiqueta "de verdade" (com
   /// sensor de gap entre etiquetas), como algumas Zjiang/Xprinter/Gainscha.
+  ///
+  /// Atenção à polaridade: no comando BITMAP do TSPL o bit **0** é que imprime
+  /// o ponto preto (1 = branco), ao contrário do raster do ESC/POS. Como
+  /// [_bitmapDoRaster] monta o bitmap na convenção intuitiva (bit 1 = tinta),
+  /// os bytes são invertidos aqui na saída — sem isso a etiqueta sai em
+  /// negativo, com o fundo todo preto.
   static Uint8List _tsplDoBitmap(_Bitmap bitmap, AppConfig config) {
     final cabecalho = 'SIZE ${config.gondolaWidthMm.toStringAsFixed(0)} mm,'
         '${config.gondolaHeightMm.toStringAsFixed(0)} mm\r\n'
@@ -269,9 +278,14 @@ class GondolaLabelService {
         'BITMAP 0,0,${bitmap.larguraBytes},${bitmap.altura},0,';
     final rodape = '\r\nPRINT 1,1\r\n';
 
+    final invertido = Uint8List(bitmap.dados.length);
+    for (var i = 0; i < bitmap.dados.length; i++) {
+      invertido[i] = ~bitmap.dados[i] & 0xFF;
+    }
+
     final builder = BytesBuilder();
     builder.add(cabecalho.codeUnits);
-    builder.add(bitmap.dados);
+    builder.add(invertido);
     builder.add(rodape.codeUnits);
     return builder.toBytes();
   }
