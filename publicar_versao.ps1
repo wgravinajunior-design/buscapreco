@@ -165,14 +165,22 @@ if (-not (Test-Path $ApkPath)) {
 Write-Step "4. Criando commit e tag Git $Tag..."
 $CommitMsg = "${Tag}: ${Notas}"
 & git add -A
-& git commit -m "$CommitMsg"
-& git tag -a $Tag -m "$CommitMsg"
+$Status = & git status --porcelain
+if ($Status) {
+    & git commit -m "$CommitMsg"
+}
+$TagExiste = & git tag -l $Tag
+if ($TagExiste) {
+    & git tag -f -a $Tag -m "$CommitMsg"
+} else {
+    & git tag -a $Tag -m "$CommitMsg"
+}
 Write-Ok "Commit e tag $Tag criados com sucesso."
 
 if (-not $SkipPush) {
     Write-Step "5. Enviando para o GitHub (git push origin master + tag)..."
     & git push origin master
-    & git push origin $Tag
+    & git push origin $Tag --force
     Write-Ok "Push concluído com sucesso."
 }
 
@@ -188,11 +196,17 @@ if (-not $SkipRelease -and (Test-Path $ApkPath)) {
             "- **SHA256:** $Sha256"
         )
         $Corpo = [string]::Join([Environment]::NewLine, $CorpoLines)
-        & gh release create $Tag $ApkPath --title $Tag --notes "$Corpo"
+        & gh release view $Tag 2>$null
         if ($LASTEXITCODE -eq 0) {
-            Write-Ok "Release $Tag criado no GitHub e APK anexado com sucesso!"
+            & gh release upload $Tag $ApkPath --clobber
+            Write-Ok "APK atualizado no Release $Tag existente no GitHub!"
         } else {
-            Write-Warn "gh release create retornou erro ao criar release."
+            & gh release create $Tag $ApkPath --title $Tag --notes "$Corpo"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "Release $Tag criado no GitHub e APK anexado com sucesso!"
+            } else {
+                Write-Warn "gh release create retornou erro ao criar release."
+            }
         }
     }
 }
