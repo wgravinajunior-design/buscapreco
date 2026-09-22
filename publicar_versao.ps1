@@ -196,8 +196,13 @@ if (-not $SkipRelease -and (Test-Path $ApkPath)) {
             "- **SHA256:** $Sha256"
         )
         $Corpo = [string]::Join([Environment]::NewLine, $CorpoLines)
-        & gh release view $Tag 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        $ListaReleases = & gh release list 2>$null
+        $ReleaseExiste = $false
+        if ($ListaReleases) {
+            $ReleaseExiste = [bool]($ListaReleases -match "(?m)^$Tag\b|\b$Tag\b")
+        }
+
+        if ($ReleaseExiste) {
             & gh release upload $Tag $ApkPath --clobber
             Write-Ok "APK atualizado no Release $Tag existente no GitHub!"
         } else {
