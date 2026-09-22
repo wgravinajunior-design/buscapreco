@@ -79,6 +79,7 @@ Write-Step "2. Atualizando arquivos de versão para $Versao ($Tag)..."
 # 1. pubspec.yaml
 $PubspecPath = "pubspec.yaml"
 $PubspecContent = Get-Content $PubspecPath -Raw
+$BuildNum = 1
 if ($PubspecContent -match 'version:\s*[0-9]+\.[0-9]+\.[0-9]+\+?([0-9]*)') {
     $BuildNum = if ($Matches[1]) { [int]$Matches[1] + 1 } else { 2 }
     $NovoPubspec = $PubspecContent -replace 'version:\s*[0-9]+\.[0-9]+\.[0-9]+\+?[0-9]*', "version: $Versao+$BuildNum"
@@ -88,21 +89,23 @@ if ($PubspecContent -match 'version:\s*[0-9]+\.[0-9]+\.[0-9]+\+?([0-9]*)') {
     Write-Warn "Não foi possível atualizar automaticamente a linha de version no pubspec.yaml."
 }
 
-# 2. app_version.dart
+# 2. lib/config/app_version.dart
 $AppVersionPath = "lib/config/app_version.dart"
 if (Test-Path $AppVersionPath) {
-    $DartContent = @"
-/// Versão e configurações do repositório para verificação de atualização.
-class AppVersion {
-  static const String version = '$Versao';
-  static const int buildNumber = $BuildNum;
-
-  static const String githubOwner = 'wgravinajunior-design';
-  static const String githubRepo = 'buscapreco';
-
-  static String get display => 'v$Versao';
-}
-"@
+    $DartLines = @(
+        "/// Versão e configurações do repositório para verificação de atualização."
+        "class AppVersion {"
+        "  static const String version = '$Versao';"
+        "  static const int buildNumber = $BuildNum;"
+        ""
+        "  static const String githubOwner = 'wgravinajunior-design';"
+        "  static const String githubRepo = 'buscapreco';"
+        ""
+        "  static String get display => 'v$Versao';"
+        "}"
+        ""
+    )
+    $DartContent = $DartLines -join [Environment]::NewLine
     Set-Content -Path $AppVersionPath -Value $DartContent
     Write-Ok "lib/config/app_version.dart atualizado."
 }
@@ -112,7 +115,14 @@ if (-not $SkipBuild) {
     $FlutterCmd = Get-Command "flutter" -ErrorAction SilentlyContinue
     if (-not $FlutterCmd) {
         # Procura em locais comuns caso não esteja no PATH atual
-        $Possiveis = @("C:\src\flutter\bin\flutter.bat", "C:\flutter\bin\flutter.bat", "$env:LOCALAPPDATA\flutter\bin\flutter.bat")
+        $Possiveis = @(
+            "C:\src\flutter\flutter\bin\flutter.bat",
+            "C:\src\flutter\bin\flutter.bat",
+            "C:\flutter\bin\flutter.bat",
+            "$env:LOCALAPPDATA\flutter\bin\flutter.bat",
+            "D:\src\flutter\bin\flutter.bat",
+            "D:\flutter\bin\flutter.bat"
+        )
         foreach ($p in $Possiveis) {
             if (Test-Path $p) {
                 $FlutterCmd = $p
@@ -122,6 +132,7 @@ if (-not $SkipBuild) {
     }
 
     if ($FlutterCmd) {
+        Write-Ok "Usando Flutter em: $FlutterCmd"
         & $FlutterCmd build apk --release
         if ($LASTEXITCODE -ne 0) {
             throw "Erro durante a compilação do APK de release."
@@ -139,6 +150,8 @@ if (-not (Test-Path $ApkPath)) {
     $ApkPath = "build\app\outputs\apk\release\app-release.apk"
 }
 
+$ApkSizeMb = 0
+$Sha256 = ""
 if (-not (Test-Path $ApkPath)) {
     Write-Warn "APK de release não encontrado em $ApkPath. Não será possível anexá-lo ao release."
 } else {
@@ -150,9 +163,10 @@ if (-not (Test-Path $ApkPath)) {
 }
 
 Write-Step "4. Criando commit e tag Git $Tag..."
+$CommitMsg = "${Tag}: ${Notas}"
 & git add -A
-& git commit -m "$Tag: $Notas"
-& git tag -a $Tag -m "$Tag: $Notas"
+& git commit -m "$CommitMsg"
+& git tag -a $Tag -m "$CommitMsg"
 Write-Ok "Commit e tag $Tag criados com sucesso."
 
 if (-not $SkipPush) {
@@ -166,13 +180,14 @@ if (-not $SkipRelease -and (Test-Path $ApkPath)) {
     Write-Step "6. Publicando Release no GitHub..."
     $GhExe = Get-Command "gh" -ErrorAction SilentlyContinue
     if ($GhExe) {
-        $Corpo = @"
-$Notas
-
-### Arquivo do Totem
-- **APK:** `app-release.apk` ($ApkSizeMb MB)
-- **SHA256:** `$Sha256`
-"@
+        $CorpoLines = @(
+            "$Notas",
+            "",
+            "### Arquivo do Totem",
+            "- **APK:** app-release.apk ($ApkSizeMb MB)",
+            "- **SHA256:** $Sha256"
+        )
+        $Corpo = [string]::Join([Environment]::NewLine, $CorpoLines)
         & gh release create $Tag $ApkPath --title $Tag --notes "$Corpo"
         if ($LASTEXITCODE -eq 0) {
             Write-Ok "Release $Tag criado no GitHub e APK anexado com sucesso!"
