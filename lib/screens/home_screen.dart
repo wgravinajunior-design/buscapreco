@@ -6,8 +6,11 @@ import '../db/firebird_service.dart';
 import '../models/product_price.dart';
 import '../services/barcode_keyboard.dart';
 import '../services/gondola_label_service.dart';
+import '../services/update_service.dart';
 import '../widgets/idle_carousel.dart';
+import '../widgets/multiple_products_modal.dart';
 import '../widgets/product_full_screen.dart';
+import '../widgets/update_dialog.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
 
@@ -32,9 +35,11 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _connectionError;
 
   ProductPrice? _product;
+  List<ProductPrice> _multipleProducts = [];
   String? _lookupError;
   bool _looking = false;
   Timer? _revertTimer;
+  ReleaseInfo? _infoAtualizacao;
 
   @override
   void initState() {
@@ -50,6 +55,9 @@ class _HomeScreenState extends State<HomeScreen> {
     // para de funcionar até reiniciar o app. Devolver o foco assim que ele se
     // perde mantém o totem sempre pronto para a próxima leitura.
     _scanFocusNode.addListener(_manterFocoNoLeitor);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scanFocusNode.requestFocus();
+    });
     _init();
   }
 
@@ -82,6 +90,18 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     setState(() => _config = config);
     await _connect();
+    unawaited(_verificarAtualizacaoSilenciosa());
+  }
+
+  Future<void> _verificarAtualizacaoSilenciosa() async {
+    try {
+      final info = await UpdateService.verificarAtualizacao();
+      if (mounted && info.temAtualizacao) {
+        setState(() => _infoAtualizacao = info);
+      }
+    } catch (_) {
+      // Ignora falhas na verificação em background
+    }
   }
 
   Future<void> _connect() async {
@@ -148,7 +168,11 @@ class _HomeScreenState extends State<HomeScreen> {
     // no meio desta consulta, limpa a tela por um instante à toa.
     _revertTimer?.cancel();
     if (!_service.isConnected) {
-      setState(() => _lookupError = 'Sem conexão com o banco de dados. Verifique a configuração.');
+      setState(() {
+        _multipleProducts = [];
+        _product = null;
+        _lookupError = 'Sem conexão com o banco de dados. Verifique a configuração.';
+      });
       _scheduleRevert(seconds: 4);
       return;
     }
@@ -157,19 +181,23 @@ class _HomeScreenState extends State<HomeScreen> {
       _lookupError = null;
     });
     try {
-      final result = await _service.lookupByCode(code, modo: config.lookupMode);
-      _aplicarResultado(result);
+      final results = await _service.lookupProducts(code, modo: config.lookupMode);
+      _aplicarResultados(results);
     } catch (e) {
       // A conexão pode ter caído (rede instável, timeout do servidor, etc.).
       // Tenta reconectar uma vez em segundo plano e refazer a leitura antes
       // de desistir, para não depender de fechar e abrir o app.
       try {
         await _connect();
-        final result = await _service.lookupByCode(code, modo: config.lookupMode);
-        _aplicarResultado(result);
+        final results = await _service.lookupProducts(code, modo: config.lookupMode);
+        _aplicarResultados(results);
       } catch (e2) {
         if (!mounted) return;
-        setState(() => _lookupError = 'Falha na conexão com o banco. Tentando novamente...\n$e2');
+        setState(() {
+          _multipleProducts = [];
+          _product = null;
+          _lookupError = 'Falha na conexão com o banco. Tentando novamente...\n$e2';
+        });
         _scheduleRevert(seconds: 4);
       }
     } finally {
@@ -177,17 +205,67 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _aplicarResultado(ProductPrice? result) {
+  void _aplicarResultados(List<ProductPrice> results) {
     if (!mounted) return;
+    if (results.isEmpty) {
+      setState(() {
+        _product = null;
+        _multipleProducts = [];
+        _lookupError = 'Produto não encontrado.';
+      });
+      _scheduleRevert(seconds: 3);
+      return;
+    }
+
+    if (results.length == 1) {
+      final item = results.first;
+      setState(() {
+        _product = item;
+        _multipleProducts = [];
+        _lookupError = null;
+      });
+      _scheduleRevert(seconds: 8);
+      final config = _config;
+      if (config != null && config.gondolaLabelEnabled && config.gondolaAutoPrint) {
+        _printGondolaLabel();
+      }
+      return;
+    }
+
+    // Mais de um produto encontrado para o mesmo código: exibe tela de escolha
     setState(() {
-      _product = result;
-      _lookupError = result == null ? 'Produto não encontrado.' : null;
+      _product = null;
+      _multipleProducts = results;
+      _lookupError = null;
     });
-    _scheduleRevert(seconds: result == null ? 3 : 8);
+    _scheduleRevert(seconds: 15);
+  }
+
+  void _selecionarProduto(ProductPrice item) {
+    if (!mounted) return;
+    _revertTimer?.cancel();
+    setState(() {
+      _product = item;
+      _multipleProducts = [];
+      _lookupError = null;
+    });
+    _scheduleRevert(seconds: 8);
+    _scanFocusNode.requestFocus();
     final config = _config;
-    if (result != null && config != null && config.gondolaLabelEnabled && config.gondolaAutoPrint) {
+    if (config != null && config.gondolaLabelEnabled && config.gondolaAutoPrint) {
       _printGondolaLabel();
     }
+  }
+
+  void _cancelarSelecao() {
+    if (!mounted) return;
+    _revertTimer?.cancel();
+    setState(() {
+      _multipleProducts = [];
+      _product = null;
+      _lookupError = null;
+    });
+    _scanFocusNode.requestFocus();
   }
 
   void _scheduleRevert({required int seconds}) {
@@ -196,6 +274,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() {
         _product = null;
+        _multipleProducts = [];
         _lookupError = null;
       });
     });
@@ -215,17 +294,26 @@ class _HomeScreenState extends State<HomeScreen> {
             // Recebe a leitura do leitor de código de barras físico, que se
             // comporta como um teclado + Enter. Não ocupa espaço nem desenha
             // nada; existe só para segurar o foco do teclado.
-            Focus(
-              focusNode: _scanFocusNode,
-              autofocus: true,
-              onKeyEvent: (_, evento) => _leitor.aoReceberTecla(evento),
-              child: const SizedBox.shrink(),
+            // TEM que estar em Positioned.fill para evitar que o Stack colapse
+            // para 0x0 quando combinado com outros Positioned nesta versão do Flutter.
+            Positioned.fill(
+              child: Focus(
+                focusNode: _scanFocusNode,
+                onKeyEvent: (_, evento) => _leitor.aoReceberTecla(evento),
+                child: const SizedBox.shrink(),
+              ),
             ),
             Positioned(
               top: 8,
               right: 8,
               child: Row(
                 children: [
+                  if (_infoAtualizacao?.temAtualizacao ?? false)
+                    IconButton(
+                      tooltip: 'Atualização disponível (${_infoAtualizacao!.tagName})',
+                      icon: const Icon(Icons.system_update, color: Colors.amberAccent),
+                      onPressed: () => UpdateDialog.show(context, _infoAtualizacao!),
+                    ),
                   if ((_config?.gondolaLabelEnabled ?? false) && _product != null)
                     IconButton(
                       tooltip: 'Imprimir etiqueta de gôndola',
@@ -317,6 +405,15 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
+      );
+    }
+    if (_multipleProducts.isNotEmpty) {
+      return MultipleProductsModal(
+        products: _multipleProducts,
+        onSelect: _selecionarProduto,
+        onCancel: _cancelarSelecao,
+        corPrincipal: corPrincipal,
+        corPromo: config.promoColor,
       );
     }
     if (_product != null) {

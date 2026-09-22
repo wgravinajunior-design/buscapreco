@@ -25,6 +25,7 @@ class QuantityTier {
 }
 
 class ProductPrice {
+  final int? id;
   final String codigo;
   final String? referencia;
   final String descricao;
@@ -44,6 +45,7 @@ class ProductPrice {
   final List<QuantityTier> faixasQuantidade;
 
   ProductPrice({
+    this.id,
     required this.codigo,
     required this.referencia,
     required this.descricao,

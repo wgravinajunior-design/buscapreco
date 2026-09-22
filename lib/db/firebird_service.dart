@@ -54,41 +54,97 @@ class FirebirdService {
     return db;
   }
 
-  /// Busca um único produto pelo campo indicado em [modo] (correspondência
-  /// exata): código de barras, código interno ou referência.
+  /// Busca os produtos correspondentes ao [code] pelo campo indicado em [modo]:
+  /// código de barras (consultando TB_PROD_CODIGO_BARRAS e TB_PRODUTO_UNIDADE),
+  /// código interno ou referência.
   ///
-  /// Tudo que a tela do totem precisa vem numa **única** ida ao servidor:
-  /// dados do produto, promoção por data, promoção de encarte ativa e código
-  /// de barras principal. Antes eram quatro consultas em sequência por
-  /// leitura, o que deixava o totem visivelmente lento em rede de loja.
-  Future<ProductPrice?> lookupByCode(String code, {required LookupMode modo}) async {
+  /// Retorna a lista de produtos encontrados. Se houver mais de um produto
+  /// associado ao mesmo código lido, a tela poderá exibir a seleção.
+  Future<List<ProductPrice>> lookupProducts(String code, {required LookupMode modo}) async {
     final db = _requireDb();
     final trimmed = code.trim();
-    if (trimmed.isEmpty) return null;
+    if (trimmed.isEmpty) return const [];
 
-    // Procura em UM campo só, o escolhido na configuração. Buscar nos três ao
-    // mesmo tempo fazia o totem exibir produto trocado: o código de barras de
-    // um item pode ser o código interno ou a referência de outro, e o banco
-    // devolvia qualquer um dos casamentos.
-    final (juncaoCodigoBarras, filtro) = switch (modo) {
+    final codigos = <String>{trimmed};
+    if (modo == LookupMode.codigoBarras) {
+      // Remove todos os zeros à esquerda (ex: '007898652371929' -> '7898652371929')
+      final semZeros = trimmed.replaceFirst(RegExp(r'^0+'), '');
+      if (semZeros.isNotEmpty && semZeros != trimmed) {
+        codigos.add(semZeros);
+      }
+      // Se tiver 13 dígitos numéricos, adiciona com 0 à esquerda (GTIN-14 no banco)
+      if (trimmed.length == 13 && RegExp(r'^\d+$').hasMatch(trimmed)) {
+        codigos.add('0$trimmed');
+      }
+      // Código de 14 dígitos iniciando com 0 (GTIN-14 enviando 0 à esquerda para EAN-13)
+      if (trimmed.length == 14 && trimmed.startsWith('0')) {
+        codigos.add(trimmed.substring(1));
+      }
+      // Código de 12 dígitos (UPC-A) que no banco pode estar como EAN-13 com 0
+      if (trimmed.length == 12 && RegExp(r'^\d+$').hasMatch(trimmed)) {
+        codigos.add('0$trimmed');
+      }
+      // Etiqueta de balança (13 dígitos iniciado com '2', padrão brasileiro de açougue/padaria)
+      // Padrão: 2 [CCCCC] [VVVVVV] [D] -> extrai o código interno do produto
+      if (trimmed.length == 13 && trimmed.startsWith('2') && RegExp(r'^\d+$').hasMatch(trimmed)) {
+        final cod5 = trimmed.substring(1, 6);
+        final cod5Num = int.tryParse(cod5);
+        if (cod5Num != null && cod5Num > 0) {
+          codigos.add(cod5Num.toString());
+          codigos.add(cod5);
+        }
+        final cod4 = trimmed.substring(1, 5);
+        final cod4Num = int.tryParse(cod4);
+        if (cod4Num != null && cod4Num > 0) {
+          codigos.add(cod4Num.toString());
+        }
+        final cod6 = trimmed.substring(1, 7);
+        final cod6Num = int.tryParse(cod6);
+        if (cod6Num != null && cod6Num > 0) {
+          codigos.add(cod6Num.toString());
+        }
+      }
+    }
+
+    final listaCodigos = codigos.toList();
+    final placeholders = List.filled(listaCodigos.length, '?').join(', ');
+
+    // Subquery deduplicada de encarte: garante que se o produto estiver em mais de um
+    // encarte vigente ao mesmo tempo, selecione apenas o mais recente, sem duplicar o produto.
+    const subqueryEncarte = '''
+      LEFT JOIN (
+        SELECT
+          pce.PRCE_PRODUTO,
+          pce.PRCE_TIPO_VALOR,
+          pce.PRCE_VALOR,
+          pr.PRO_TITULO,
+          pr.PRO_DT_INICIO
+        FROM TB_PROMOCAO_ENCARTE pce
+        JOIN TB_PROMOCAO pr ON pr.PRO_ID = pce.PRCE_PROMOCAO
+        WHERE pr.PRO_DT_INICIO <= CURRENT_DATE
+          AND pr.PRO_DT_FIM >= CURRENT_DATE
+          AND pce.PRCE_ID = (
+            SELECT FIRST 1 pce2.PRCE_ID
+            FROM TB_PROMOCAO_ENCARTE pce2
+            JOIN TB_PROMOCAO pr2 ON pr2.PRO_ID = pce2.PRCE_PROMOCAO
+            WHERE pce2.PRCE_PRODUTO = pce.PRCE_PRODUTO
+              AND pr2.PRO_DT_INICIO <= CURRENT_DATE
+              AND pr2.PRO_DT_FIM >= CURRENT_DATE
+            ORDER BY pr2.PRO_DT_INICIO DESC, pce2.PRCE_ID DESC
+          )
+      ) enc ON enc.PRCE_PRODUTO = p.PRD_ID
+    ''';
+
+    final (sql, params) = switch (modo) {
       LookupMode.codigoBarras => (
-        '''LEFT JOIN TB_PROD_CODIGO_BARRAS blido
-                  ON CAST(blido.PRDC_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
-                 AND blido.PRDC_COD_BARRAS = ?''',
-        'blido.PRDC_PRODUTO IS NOT NULL',
-      ),
-      LookupMode.codigo => ('', 'p.PRD_CODIGO = ?'),
-      LookupMode.referencia => ('', 'UPPER(p.PRD_REFERENCIA) = UPPER(?)'),
-    };
-
-    final row = await db.selectOne(
-      sql: '''
-        SELECT FIRST 1
+        '''
+        SELECT
+          p.PRD_ID,
           p.PRD_CODIGO,
           p.PRD_REFERENCIA,
           p.PRD_DESCRICAO,
-          p.PRD_PRECO_VENDA,
-          p.PRD_UN_VENDA,
+          COALESCE(NULLIF(origem.PRECO_VENDA, 0), p.PRD_PRECO_VENDA) AS PRD_PRECO_VENDA,
+          COALESCE(NULLIF(TRIM(origem.UNIDADE), ''), p.PRD_UN_VENDA, 'UN') AS PRD_UN_VENDA,
           p.PRD_IMAGEM,
           CASE
             WHEN p.PRD_DT_INI_PROM <= CURRENT_DATE AND p.PRD_DT_FIM_PROM >= CURRENT_DATE
@@ -98,41 +154,155 @@ class FirebirdService {
           enc.PRO_TITULO,
           enc.PRCE_TIPO_VALOR,
           enc.PRCE_VALOR,
-          (SELECT FIRST 1 b2.PRDC_COD_BARRAS
-             FROM TB_PROD_CODIGO_BARRAS b2
-            WHERE CAST(b2.PRDC_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
-            ORDER BY b2.PRDC_COD_BARRAS) AS COD_BARRAS
-        FROM TB_PRODUTO p
-        -- O filtro de vigência precisa ficar DENTRO da tabela derivada. Num
-        -- LEFT JOIN direto em TB_PROMOCAO_ENCARTE, uma promoção vencida ainda
-        -- traria PRCE_VALOR preenchido (só TB_PROMOCAO viria NULL) e o preço
-        -- de um encarte expirado acabaria aplicado no produto.
-        LEFT JOIN (
+          origem.COD_BARRAS
+        FROM (
+          -- Origem 1: Tabela de códigos de barras adicionais e principais
           SELECT
-            pce.PRCE_PRODUTO,
-            pce.PRCE_TIPO_VALOR,
-            pce.PRCE_VALOR,
-            pr.PRO_TITULO,
-            pr.PRO_DT_INICIO
-          FROM TB_PROMOCAO_ENCARTE pce
-          JOIN TB_PROMOCAO pr ON pr.PRO_ID = pce.PRCE_PROMOCAO
-          WHERE pr.PRO_DT_INICIO <= CURRENT_DATE
-            AND pr.PRO_DT_FIM >= CURRENT_DATE
-        ) enc ON CAST(enc.PRCE_PRODUTO AS VARCHAR(20)) = p.PRD_CODIGO
-        $juncaoCodigoBarras
-        WHERE p.PRD_STATUS <> 'I'
-          AND $filtro
-        -- Encarte mais recente primeiro; PRD_CODIGO só para desempatar e
-        -- manter o resultado estável.
-        ORDER BY enc.PRO_DT_INICIO DESC NULLS LAST, p.PRD_CODIGO
-      ''',
-      parameters: [trimmed],
+            b.PRDC_PRODUTO AS PROD_ID,
+            b.PRDC_COD_BARRAS AS COD_BARRAS,
+            NULL AS UNIDADE,
+            CAST(NULL AS NUMERIC(15, 6)) AS PRECO_VENDA
+          FROM TB_PROD_CODIGO_BARRAS b
+          WHERE TRIM(b.PRDC_COD_BARRAS) IN ($placeholders)
+
+          UNION
+
+          -- Origem 2: Tabela de unidades alternativas do produto (ex: caixas, fardos)
+          SELECT
+            u.PRDU_PRODUTO AS PROD_ID,
+            u.PRDU_COD_BARRAS AS COD_BARRAS,
+            u.PRDU_UNIDADE AS UNIDADE,
+            u.PRDU_PRECO_VENDA AS PRECO_VENDA
+          FROM TB_PRODUTO_UNIDADE u
+          WHERE TRIM(u.PRDU_COD_BARRAS) IN ($placeholders)
+
+          UNION
+
+          -- Origem 3: Produtos cujo código de barras foi cadastrado diretamente em PRD_CODIGO
+          SELECT
+            p0.PRD_ID AS PROD_ID,
+            p0.PRD_CODIGO AS COD_BARRAS,
+            p0.PRD_UN_VENDA AS UNIDADE,
+            p0.PRD_PRECO_VENDA AS PRECO_VENDA
+          FROM TB_PRODUTO p0
+          WHERE TRIM(p0.PRD_CODIGO) IN ($placeholders)
+        ) origem
+        JOIN TB_PRODUTO p ON p.PRD_ID = origem.PROD_ID
+        $subqueryEncarte
+        WHERE (p.PRD_STATUS IS NULL OR p.PRD_STATUS <> 'I')
+        ORDER BY enc.PRO_DT_INICIO DESC NULLS LAST, p.PRD_DESCRICAO, p.PRD_ID
+        ''',
+        [...listaCodigos, ...listaCodigos, ...listaCodigos],
+      ),
+      LookupMode.codigo => (
+        '''
+        SELECT
+          p.PRD_ID,
+          p.PRD_CODIGO,
+          p.PRD_REFERENCIA,
+          p.PRD_DESCRICAO,
+          p.PRD_PRECO_VENDA,
+          COALESCE(p.PRD_UN_VENDA, 'UN') AS PRD_UN_VENDA,
+          p.PRD_IMAGEM,
+          CASE
+            WHEN p.PRD_DT_INI_PROM <= CURRENT_DATE AND p.PRD_DT_FIM_PROM >= CURRENT_DATE
+            THEN p.PRD_VALOR_PROM
+            ELSE NULL
+          END AS PRD_VALOR_PROM_ATIVO,
+          enc.PRO_TITULO,
+          enc.PRCE_TIPO_VALOR,
+          enc.PRCE_VALOR,
+          COALESCE(
+            (SELECT FIRST 1 b2.PRDC_COD_BARRAS
+               FROM TB_PROD_CODIGO_BARRAS b2
+              WHERE b2.PRDC_PRODUTO = p.PRD_ID
+                AND b2.PRDC_COD_BARRAS IS NOT NULL
+              ORDER BY b2.PRDC_COD_BARRAS),
+            (SELECT FIRST 1 u2.PRDU_COD_BARRAS
+               FROM TB_PRODUTO_UNIDADE u2
+              WHERE u2.PRDU_PRODUTO = p.PRD_ID
+                AND u2.PRDU_COD_BARRAS IS NOT NULL
+              ORDER BY u2.PRDU_COD_BARRAS)
+          ) AS COD_BARRAS
+        FROM TB_PRODUTO p
+        $subqueryEncarte
+        WHERE (p.PRD_STATUS IS NULL OR p.PRD_STATUS <> 'I')
+          AND (TRIM(p.PRD_CODIGO) = ? OR CAST(p.PRD_ID AS VARCHAR(20)) = ?)
+        ORDER BY enc.PRO_DT_INICIO DESC NULLS LAST, p.PRD_DESCRICAO, p.PRD_ID
+        ''',
+        [trimmed, trimmed],
+      ),
+      LookupMode.referencia => (
+        '''
+        SELECT
+          p.PRD_ID,
+          p.PRD_CODIGO,
+          p.PRD_REFERENCIA,
+          p.PRD_DESCRICAO,
+          p.PRD_PRECO_VENDA,
+          COALESCE(p.PRD_UN_VENDA, 'UN') AS PRD_UN_VENDA,
+          p.PRD_IMAGEM,
+          CASE
+            WHEN p.PRD_DT_INI_PROM <= CURRENT_DATE AND p.PRD_DT_FIM_PROM >= CURRENT_DATE
+            THEN p.PRD_VALOR_PROM
+            ELSE NULL
+          END AS PRD_VALOR_PROM_ATIVO,
+          enc.PRO_TITULO,
+          enc.PRCE_TIPO_VALOR,
+          enc.PRCE_VALOR,
+          COALESCE(
+            (SELECT FIRST 1 b2.PRDC_COD_BARRAS
+               FROM TB_PROD_CODIGO_BARRAS b2
+              WHERE b2.PRDC_PRODUTO = p.PRD_ID
+                AND b2.PRDC_COD_BARRAS IS NOT NULL
+              ORDER BY b2.PRDC_COD_BARRAS),
+            (SELECT FIRST 1 u2.PRDU_COD_BARRAS
+               FROM TB_PRODUTO_UNIDADE u2
+              WHERE u2.PRDU_PRODUTO = p.PRD_ID
+                AND u2.PRDU_COD_BARRAS IS NOT NULL
+              ORDER BY u2.PRDU_COD_BARRAS)
+          ) AS COD_BARRAS
+        FROM TB_PRODUTO p
+        $subqueryEncarte
+        WHERE (p.PRD_STATUS IS NULL OR p.PRD_STATUS <> 'I')
+          AND (UPPER(TRIM(p.PRD_REFERENCIA)) = UPPER(?)
+               OR p.PRD_ID IN (SELECT u2.PRDU_PRODUTO FROM TB_PRODUTO_UNIDADE u2 WHERE UPPER(TRIM(u2.PRDU_REFERENCIA)) = UPPER(?)))
+        ORDER BY enc.PRO_DT_INICIO DESC NULLS LAST, p.PRD_DESCRICAO, p.PRD_ID
+        ''',
+        [trimmed, trimmed],
+      ),
+    };
+
+    final rows = await db.selectAll(
+      sql: sql,
+      parameters: params,
     ).timeout(_networkTimeout);
-    if (row == null) return null;
-    return _buildProductPrice(row);
+
+    if (rows.isEmpty) return const [];
+
+    final produtos = <ProductPrice>[];
+    final vistos = <String>{};
+
+    for (final row in rows) {
+      final p = await _buildProductPrice(row);
+      // Garante que o mesmo produto na mesma unidade e preço não se repita
+      final chave = '${p.id ?? p.codigo}_${p.unidade}_${p.precoVenda}';
+      if (vistos.add(chave)) {
+        produtos.add(p);
+      }
+    }
+
+    return produtos;
+  }
+
+  /// Busca um único produto pelo campo indicado em [modo] (compatibilidade).
+  Future<ProductPrice?> lookupByCode(String code, {required LookupMode modo}) async {
+    final list = await lookupProducts(code, modo: modo);
+    return list.isEmpty ? null : list.first;
   }
 
   Future<ProductPrice> _buildProductPrice(Map<String, dynamic> row) async {
+    final id = _toIntOrNull(row['PRD_ID']);
     final codigo = (_toStringOrNull(row['PRD_CODIGO']) ?? '').trim();
     final precoVenda = _toDouble(row['PRD_PRECO_VENDA']);
 
@@ -147,9 +317,9 @@ class FirebirdService {
     // de encarte ativa, ela é a promoção principal do produto e a promoção
     // por quantidade (TB_PRODUTO_PROMOCAO) é ignorada.
     List<QuantityTier> faixas = const [];
-    if (!promoAtiva && precoEncarte == null) {
+    if (!promoAtiva && precoEncarte == null && id != null) {
       try {
-        faixas = await _fetchFaixasQuantidade(codigo);
+        faixas = await _fetchFaixasQuantidade(id);
       } catch (_) {
         // Faixa de quantidade é informação extra; um erro aqui não pode
         // impedir a exibição do preço do produto.
@@ -158,6 +328,7 @@ class FirebirdService {
     }
 
     return ProductPrice(
+      id: id,
       codigo: codigo,
       referencia: _toStringOrNull(row['PRD_REFERENCIA']),
       descricao: (_toStringOrNull(row['PRD_DESCRICAO']) ?? '').trim(),
@@ -182,19 +353,18 @@ class FirebirdService {
     return tipoValor == 'P' ? precoVenda * (1 - valor / 100) : valor;
   }
 
-  /// Faixas de preço por quantidade (TB_PRODUTO_PROMOCAO). Só é consultada
-  /// quando o produto não tem promoção por data nem de encarte ativa —
-  /// essas duas têm prioridade e substituem a promoção por quantidade.
-  Future<List<QuantityTier>> _fetchFaixasQuantidade(String codigoProduto) async {
+  /// Faixas de preço por quantidade (TB_PRODUTO_PROMOCAO). Vinculadas
+  /// ao PRD_ID (PRDM_PRODUTO) do produto.
+  Future<List<QuantityTier>> _fetchFaixasQuantidade(int idProduto) async {
     final db = _requireDb();
     final rows = await db.selectAll(
       sql: '''
         SELECT PRDM_QTDE_INI, PRDM_QTDE_FIM, PRDM_VALOR_PROM, PRDM_TIPO_VALOR
         FROM TB_PRODUTO_PROMOCAO
-        WHERE CAST(PRDM_PRODUTO AS VARCHAR(20)) = ?
+        WHERE PRDM_PRODUTO = ?
         ORDER BY PRDM_QTDE_INI
       ''',
-      parameters: [codigoProduto],
+      parameters: [idProduto],
     ).timeout(_networkTimeout);
 
     return [
@@ -206,6 +376,13 @@ class FirebirdService {
           isPercentual: _toStringOrNull(r['PRDM_TIPO_VALOR'])?.trim().toUpperCase() == 'P',
         ),
     ];
+  }
+
+  int? _toIntOrNull(dynamic v) {
+    if (v == null) return null;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v.toString());
   }
 
   double _toDouble(dynamic v) {

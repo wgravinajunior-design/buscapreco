@@ -3,11 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 import 'package:image_picker/image_picker.dart';
 import '../config/app_config.dart';
+import '../config/app_version.dart';
 import '../models/gondola_field.dart';
 import '../models/lookup_mode.dart';
 import '../services/banner_storage.dart';
 import '../services/bluetooth_printer_service.dart';
+import '../services/update_service.dart';
 import '../widgets/color_palette_picker.dart';
+import '../widgets/update_dialog.dart';
 import 'gondola_label_editor_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -40,6 +43,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late String _gondolaProtocol;
   late bool _gondolaAutoPrint;
   late final TextEditingController _gondolaPrinterWidthDots;
+  bool _verificandoAtualizacao = false;
+  ReleaseInfo? _infoAtualizacao;
+  String? _statusAtualizacao;
 
   @override
   void initState() {
@@ -192,6 +198,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // o usuário removeu, para não acumular imagens órfãs no aparelho.
     await BannerStorage.limparOrfaos(_banners);
     if (mounted) Navigator.of(context).pop(true);
+  }
+
+  Future<void> _verificarAtualizacao() async {
+    setState(() {
+      _verificandoAtualizacao = true;
+      _statusAtualizacao = null;
+    });
+    try {
+      final info = await UpdateService.verificarAtualizacao();
+      if (!mounted) return;
+      setState(() {
+        _infoAtualizacao = info;
+        if (!info.sucesso) {
+          _statusAtualizacao = info.erro ?? 'Erro ao consultar atualizações.';
+        } else if (info.temAtualizacao) {
+          _statusAtualizacao = 'Nova versão disponível: ${info.tagName}';
+        } else {
+          _statusAtualizacao = 'O BuscaPreço já está na versão mais recente (${AppVersion.display}).';
+        }
+      });
+      if (info.temAtualizacao && mounted) {
+        UpdateDialog.show(context, info);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _statusAtualizacao = 'Erro: $e');
+    } finally {
+      if (mounted) setState(() => _verificandoAtualizacao = false);
+    }
   }
 
   @override
@@ -545,6 +579,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Text('Salvar'),
               ),
             ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 12),
+            const Text(
+              'Versão e Atualização',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Versão instalada: ${AppVersion.display} (Build ${AppVersion.buildNumber})',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _verificandoAtualizacao ? null : _verificarAtualizacao,
+              icon: _verificandoAtualizacao
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.system_update_alt),
+              label: Text(_verificandoAtualizacao ? 'Verificando...' : 'Verificar atualizações no GitHub'),
+            ),
+            if (_statusAtualizacao != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _statusAtualizacao!,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: (_infoAtualizacao?.temAtualizacao ?? false)
+                      ? Colors.green.shade700
+                      : Colors.grey.shade700,
+                  fontWeight: (_infoAtualizacao?.temAtualizacao ?? false)
+                      ? FontWeight.bold
+                      : FontWeight.normal,
+                ),
+              ),
+            ],
           ],
         ),
       ),
