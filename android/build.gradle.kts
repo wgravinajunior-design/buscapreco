@@ -27,12 +27,15 @@ subprojects {
     if (project.name == "app") return@subprojects
     afterEvaluate {
         val android = extensions.findByName("android") as? com.android.build.gradle.BaseExtension
-        if (android != null && android.namespace == null) {
-            val manifestFile = file("src/main/AndroidManifest.xml")
-            if (manifestFile.exists()) {
-                val pkg = groovy.xml.XmlSlurper().parse(manifestFile).getProperty("@package").toString()
-                if (pkg.isNotBlank()) {
-                    android.namespace = pkg
+        if (android != null) {
+            android.compileSdkVersion(34)
+            if (android.namespace == null) {
+                val manifestFile = file("src/main/AndroidManifest.xml")
+                if (manifestFile.exists()) {
+                    val pkg = groovy.xml.XmlSlurper().parse(manifestFile).getProperty("@package").toString()
+                    if (pkg.isNotBlank()) {
+                        android.namespace = pkg
+                    }
                 }
             }
         }

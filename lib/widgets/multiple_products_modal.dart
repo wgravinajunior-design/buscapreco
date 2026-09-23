@@ -314,13 +314,17 @@ class MultipleProductsModal extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            'Ou passe outro código no leitor para nova consulta',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
-              fontSize: 14,
+          Expanded(
+            child: Text(
+              'Ou passe outro código no leitor para nova consulta',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.5),
+                fontSize: 14,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
+          const SizedBox(width: 8),
           TextButton.icon(
             onPressed: onCancel,
             icon: const Icon(Icons.arrow_back, color: Colors.white70),
